@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import time
 import re
 import json
+from pathlib import Path
 
 # Cabezeras para evitar que la conexion sea rechazada
 HEADERS = {
@@ -125,6 +126,7 @@ def parse_reviews(soup: BeautifulSoup):
         # == Extrayendo la informacion de los elementos ==
         if text_element:
             text = text_element.get_text(strip=True)
+
         buttons = footer.select("span.Button__labelItem") if footer else None
         if buttons:
             for btn in buttons:
@@ -240,6 +242,9 @@ def main():
         return
 
     for g in genres:
+        if Path(f"{g.strip()}.json").exists():
+            print(f"Archivo {g.strip()}.json encontrado, omitiendo")
+            continue
         print(f"Iniciando scrapeando: {g.strip()}")
         books_urls = get_books_urls_from_genre(g.strip())
         books_data = []
