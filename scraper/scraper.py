@@ -110,6 +110,17 @@ def parse_book_data(soup: BeautifulSoup) -> dict:
     return book_data
 
 
+def parse_likes(likes: str) -> int:
+    likes = likes.strip()
+    likes = likes.replace("likes", "")
+    if ',' in likes:
+        likes = likes.replace(',','')
+    elif 'k' in likes:
+        likes = likes.replace('k','')
+        return int(float(likes) * 1000)
+    return int(likes)
+
+
 def parse_reviews(soup: BeautifulSoup):
     """
     Obtiene la infirmacion de las resenas del libro
@@ -132,10 +143,7 @@ def parse_reviews(soup: BeautifulSoup):
             for btn in buttons:
                 bt_text = btn.get_text(strip=True)
                 if "likes" in bt_text:
-                    likes = bt_text.strip()
-                    likes = likes.replace("likes", "")
-                    likes = likes.replace(',','')
-                    likes = int(likes)
+                    likes = parse_likes(bt_text)
                     break
 
         if text:
@@ -227,6 +235,7 @@ def save_to_json(all_books: list, filename: str):
     """
     with open(filename + ".json", "w", encoding="utf-8") as f:
         json.dump(all_books, f, ensure_ascii=False, indent=2)
+
 
 def main():
     update_list_input = str(input("¿Actualizar o crear archivo de generos a scrapear? [y,N]:"))
