@@ -4,6 +4,7 @@ import time
 import re
 import json
 from pathlib import Path
+import os
 
 # Cabezeras para evitar que la conexion sea rechazada
 HEADERS = {
@@ -20,6 +21,9 @@ GENRES_FILENAME = "genres.txt"
 
 # Expresion regular para el url de un libro
 REGEX_BOOK_URL = r"https://www\.goodreads\.com/book/show/\d+[\w.\-]+$"
+
+
+DATA_DIR = "data/"
 
 
 def scrap_genre_names_list():
@@ -249,10 +253,18 @@ def main():
     if not genres:
         print("No se pudo encontrar el archivo de generos")
         return
+    
+    try:
+        os.mkdir(DATA_DIR)
+    except PermissionError:
+        print(f"Permiso denegado para crear directorio {DATA_DIR}")
+        return
+    except FileExistsError:
+        pass
 
     for g in genres:
-        if Path(f"{g.strip()}.json").exists():
-            print(f"Archivo {g.strip()}.json encontrado, omitiendo")
+        if Path(f"{DATA_DIR}{g.strip()}.json").exists():
+            print(f"{DATA_DIR}{g.strip()}.json encontrado, omitiendo")
             continue
         print(f"Iniciando scrapeando: {g.strip()}")
         books_urls = get_books_urls_from_genre(g.strip())
@@ -266,7 +278,7 @@ def main():
             i += 1
             print(f"Se han scrapeado {i}/{len(books_urls)} libros del genero {g.strip()}")
 
-        save_to_json(books_data, g.strip())
+        save_to_json(books_data, f"{DATA_DIR}{g.strip()}")
         print(f"Scrapeo finalizado: {g}")
 
 
