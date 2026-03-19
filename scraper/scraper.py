@@ -67,7 +67,6 @@ def scrap_genre_names_list():
     with open(GENRES_FILENAME, 'w') as file:
         for g in genre_names_list:
             file.write(g + "\n")
-        file.writelines(genre_names_list)
 
 
 def parse_book_data(soup: BeautifulSoup) -> dict:
