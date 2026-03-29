@@ -2,6 +2,7 @@ from scraper import most_read_scraper
 import json
 from datetime import date
 import logging
+from pathlib import Path
 import boto3
 from botocore.exceptions import NoCredentialsError
 
@@ -34,6 +35,8 @@ def main():
         logging.exception("No se encontraron credenciales de AWS configuradas.")
     except Exception as e:
         logging.exception(f"{e}")
+
+    Path(local_filename).unlink(True)
 
     
 
