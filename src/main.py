@@ -35,8 +35,8 @@ def main():
         logging.exception("No se encontraron credenciales de AWS configuradas.")
     except Exception as e:
         logging.exception(f"{e}")
-
-    Path(local_filename).unlink(True)
+    finally:
+        Path(local_filename).unlink(True)
 
     
 
