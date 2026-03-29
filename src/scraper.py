@@ -2,9 +2,9 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import re
-import json
-from pathlib import Path
-import os
+import logging
+from tqdm import tqdm
+
 
 # Cabezeras para evitar que la conexion sea rechazada
 HEADERS = {
@@ -16,270 +16,225 @@ HEADERS = {
     "Referer": "https://www.goodreads.com",
 }
 
-# Nombre del arvchivo para los generos
-GENRES_FILENAME = "genres.txt"
-
 # Expresion regular para el url de un libro
-REGEX_BOOK_URL = r"https://www\.goodreads\.com/book/show/\d+[\w.\-]+$"
+REGEX_BOOK_URL = r"https://www.goodreads.com/book/show/\d+[\w.\-]+$"
+MOST_READ_BOOKS_URL = r"https://www.goodreads.com/book/most_read"
 
 
-DATA_DIR = "data/"
-
-
-def scrap_genre_names_list():
+class most_read_scraper():
     """
-    Funcion para scrapear el nombre de los generos reconocidos por goodreads
-    Guarda salida en documento para evitar scrapear la lista cada vez,
-    pues la funcion implementa una espera aleatoria para evitar que la pagina
-    bloquee el trafico.
-    No correr a menos que el docuento no exista o se quiera actualizar la lista
+    Clase que implementa un scraper para obtener informacion PUBLICA de la pagina goodreads 
+    acerca de los libros mas populares cada semana publicados en la pagina MOST_READ_BOOKS_URL
     """
-    genre_names_list : list[str] = []
-    base_genres_list_url: str = "https://www.goodreads.com/genres/list?page="
+    def __init__(self, max_conn_retries = 3) -> None:
+        self.most_read_url_list = []
+        self.max_conn_retries = max_conn_retries
+        self.books_data = []
+        
 
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    for page in range(1, 17):
-        print(f"Scraping page {page}/17")
-        try:
-            response = session.get(base_genres_list_url + f"{page}", timeout=10)
-        except requests.exceptions.ReadTimeout:
-            print(f"Timeout en {base_genres_list_url + f"{page}"}, reintentando...")
-            time.sleep(5)
-            try:
-                response = session.get(base_genres_list_url + f"{page}", timeout=15)
-            except requests.exceptions.ReadTimeout:
-                print(f"Timeout definitivo, saltando {base_genres_list_url + f"{page}"}")
-                return {}
+    def scrape(self):
+        if self._get_books_list() is False:
+            logging.error("No se pudo obtener informacion de los libros")
+            return
+        
+        for book in tqdm(self.most_read_url_list, desc="Scrapeando libros"):
+            self.books_data.append(self._scrape_book(book))
+
+
+    def _get_books_list(self) -> bool:
+        """
+        Obtiene las url relativas de los libros listados en la pagina "book/most_read"
+        y los guarda en la lista most_read_url_list
+        """
+        base_book_url: str = "https://www.goodreads.com"
+        session = requests.Session()
+        session.headers.update(HEADERS)
+
+        response = self._get_response(session, MOST_READ_BOOKS_URL)
+        if response is None:
+            self.most_read_url_list = []
+            return False
+    
         if response.status_code != 200:
-            print(f"Error scraping page {page}: \n {response.status_code}")
-            continue
+            logging.error("No se ha obtenido la respuesta esperada para scrapeando most_read")
+            logging.error(response.status_code)
+            self.most_read_url_list = []
+            return False
         
         soup = BeautifulSoup(response.text, "html.parser")
-        genres_current_page = [
-            genre_element.get_text(strip=True)  
-            for genre_element in soup.select("div.shelfStat a")
+        self.most_read_url_list = [
+            base_book_url + str(a.get("href"))
+            for a in soup.select("a.bookTitle")
         ]
-        genre_names_list.extend(genres_current_page)
-        time.sleep(7)
-    
-    print("Scraping was successful, writing to file")
-    with open(GENRES_FILENAME, 'w') as file:
-        for g in genre_names_list:
-            file.write(g + "\n")
+        return True
 
 
-def parse_book_data(soup: BeautifulSoup) -> dict:
-    """
-        Obtiene la informacion del libro
-        Devuelve los metadatos del libro en un diccionario
-    """
-    book_data = {"title":"", 
-                 "author":"", 
-                 "description":"" , 
-                 "genres":[], 
-                 "rating": None, 
-                 "date": ""}
-    # == Obteniendo los elementos HTML del libro ==
-    title_element = soup.select_one("h1[data-testid='bookTitle']")
-    author_element = soup.select_one("span.ContributorLink__name[data-testid='name']")
-    description_element = soup.select_one("div[data-testid='description'] .Formatted")
-    genres_element = soup.select("div[data-testid='genresList'] .Button__labelItem")
-    rating_element = soup.select_one("div.RatingStatistics__rating")
-    date_element = soup.select_one("p[data-testid='publicationInfo']")
 
-    # == Extrayendo la informacion de los elementos ==
-    if title_element:
-        book_data["title"] = title_element.get_text(strip=True)
-    if author_element:
-        book_data["author"] = author_element.get_text(strip=True)
-    if description_element:
-        book_data["description"] = description_element.get_text(strip=True)
-    if genres_element:
-        if len(genres_element) > 1:
-            genres_element.pop()
-        book_data["genres"] = [g.get_text(strip=True) for g in genres_element]
-    if rating_element:
-        try:
-            book_data["rating"] = float(rating_element.get_text(strip=True))
-        except ValueError:
-            pass
-    if date_element:
-        date = date_element.get_text(strip=True)
-        date = date.replace("First published ", '')
-        date = date.replace(',', '')
-        book_data["date"] = date
-    
-    return book_data
-
-
-def parse_likes(likes: str) -> int:
-    likes = likes.strip()
-    likes = likes.replace("likes", "")
-    if ',' in likes:
-        likes = likes.replace(',','')
-    elif 'k' in likes:
-        likes = likes.replace('k','')
-        return int(float(likes) * 1000)
-    return int(likes)
-
-
-def parse_reviews(soup: BeautifulSoup):
-    """
-    Obtiene la infirmacion de las resenas del libro
-    """
-    reviews = []
-
-    for card in soup.select("article.ReviewCard"):
-        text = None
-        likes = None
-        # == Obteniendo los elementos HTML de la opinion ==
-        text_element = card.select_one(".ReviewText__content") 
-        footer = card.select_one("footer.SocialFooter")
+    def _scrape_book(self, URL: str) -> dict:
+        """
+            Recolecta la informacion del libro proporcionado como parametro y sus resenas
+            Devuelve un diccionario con el formato {"libro": info_libro, "reviews": info_reviews}
+        """
+        if not re.match(REGEX_BOOK_URL, URL):
+            logging.error(f"El url {URL} es invalido, debes proporcionar el url del libro")
+            return {}
         
-        # == Extrayendo la informacion de los elementos ==
-        if text_element:
-            text = text_element.get_text(strip=True)
+        session = requests.Session()
+        session.headers.update(HEADERS)
 
-        buttons = footer.select("span.Button__labelItem") if footer else None
-        if buttons:
-            for btn in buttons:
-                bt_text = btn.get_text(strip=True)
-                if "likes" in bt_text:
-                    likes = parse_likes(bt_text)
-                    break
+        response = self._get_response(session, URL)
+        if response is None:
+            return{}
 
-        if text:
-            reviews.append({
-                "text": text,
-                "likes": likes,
-            })
-
-    return reviews
-
-
-def scrape_book(URL: str) -> dict:
-    """
-        Recolecta la informacion del libro proporcionado como parametro y sus resenas
-        Devuelve un diccionario con el formato {"libro": info_libro, "reviews": info_reviews}
-    """
-    if not re.match(REGEX_BOOK_URL, URL):
-        print(f"El url {URL} es invalido, debes proporcionar el url del libro")
-        return {}
-    
-    session = requests.Session()
-    session.headers.update(HEADERS)
-
-    try:
-        response = session.get(URL, timeout=10)
-    except requests.exceptions.ReadTimeout:
-        print(f"Timeout en {URL}, reintentando...")
-        time.sleep(5)
-        try:
-            response = session.get(URL, timeout=15)
-        except requests.exceptions.ReadTimeout:
-            print(f"Timeout definitivo, saltando {URL}")
+        if response.status_code != 200:
+            logging.error(f"{response.status_code}")
             return {}
 
-    if response.status_code != 200:
-        print(f"Error {response.status_code}")
-        return {}
+        soup = BeautifulSoup(response.text, "html.parser")
+        book_data = self._get_book_data(soup)
+        reviews = self._get_reviews_data(soup)
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    book_data = parse_book_data(soup)
-    reviews = parse_reviews(soup)
-
-    return {
-        "book": book_data,
-        "reviews": reviews
-    }
+        return {
+            "book": book_data,
+            "reviews": reviews
+        }
 
 
-def get_books_urls_from_genre(genre: str) -> list[str]:
-    """
-        Obtiene los url a los libros de una seccion o genero 
-        El link de la seccion o genero debe comenzar como:\n
-        https://www.goodreads.com/shelf/show/\n
-        A esta url base se le concatenara el genero que se indique
-        en el parametro
-    """
-    base_genre_url: str = "https://www.goodreads.com/shelf/show/"
-    base_book_url: str = "https://www.goodreads.com"
-    session = requests.Session()
-    session.headers.update(HEADERS)
+    def _get_book_data(self, soup: BeautifulSoup) -> dict:
+        """
+            Obtiene la informacion del libro
+            Devuelve los metadatos del libro en un diccionario
+        """
+        book_data = {"title":"", 
+                    "author":"", 
+                    "description":"" , 
+                    "genres":[], 
+                    "rating": None, 
+                    "date": ""}
+        # == Obteniendo los elementos HTML del libro ==
+        title_element = soup.select_one("h1[data-testid='bookTitle']")
+        author_element = soup.select_one("span.ContributorLink__name[data-testid='name']")
+        description_element = soup.select_one("div[data-testid='description'] .Formatted")
+        genres_element = soup.select("div[data-testid='genresList'] .Button__labelItem")
+        rating_element = soup.select_one("div.RatingStatistics__rating")
+        date_element = soup.select_one("p[data-testid='publicationInfo']")
 
-    try:
-        response = session.get(base_genre_url + f"{genre}", timeout=10)
-    except requests.exceptions.ReadTimeout:
-        print(f"Timeout en {base_genre_url + f"{genre}"}, reintentando...")
-        time.sleep(5)
-        try:
-            response = session.get(base_genre_url + f"{genre}", timeout=15)
-        except requests.exceptions.ReadTimeout:
-            print(f"Timeout definitivo, saltando {base_genre_url + f"{genre}"}")
+        # == Extrayendo la informacion de los elementos ==
+        if title_element:
+            book_data["title"] = title_element.get_text(strip=True)
+        if author_element:
+            book_data["author"] = author_element.get_text(strip=True)
+        if description_element:
+            book_data["description"] = description_element.get_text(strip=True)
+        if genres_element:
+            if len(genres_element) > 1:
+                genres_element.pop()
+            book_data["genres"] = [g.get_text(strip=True) for g in genres_element]
+        if rating_element:
+            try:
+                book_data["rating"] = float(rating_element.get_text(strip=True))
+            except ValueError:
+                pass
+        if date_element:
+            date = date_element.get_text(strip=True)
+            date = date.replace("First published ", '')
+            date = date.replace(',', '')
+            book_data["date"] = date
+        
+        return book_data
+
+
+    def _get_reviews_data(self, soup: BeautifulSoup) -> list:
+        """
+        Obtiene la informacion de las reseñas del libro
+        Devuelve una lista con la informacion de las opiniones (texto y likes)
+        """
+        reviews = []
+
+        for card in soup.select("article.ReviewCard"):
+            text = None
+            likes = None
+            # == Obteniendo los elementos HTML de la opinion ==
+            text_element = card.select_one(".ReviewText__content") 
+            footer = card.select_one("footer.SocialFooter")
+            
+            # == Extrayendo la informacion de los elementos ==
+            if text_element:
+                text = text_element.get_text(strip=True)
+
+            buttons = footer.select("span.Button__labelItem") if footer else None
+            if buttons:
+                for btn in buttons:
+                    bt_text = btn.get_text(strip=True)
+                    if "likes" in bt_text:
+                        likes = self._format_likes(bt_text)
+                        break
+
+            if text:
+                reviews.append({
+                    "text": text,
+                    "likes": likes,
+                })
+        
+        return reviews
+    
+    def get_books_urls_from_genre(self, genre: str) -> list[str]:
+        """
+            Obtiene los url a los libros de una seccion o genero 
+            El link de la seccion o genero debe comenzar como:\n
+            https://www.goodreads.com/shelf/show/\n
+            A esta url base se le concatenara el genero que se indique
+            en el parametro
+        """
+        base_genre_url: str = "https://www.goodreads.com/shelf/show/"
+        base_book_url: str = "https://www.goodreads.com"
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        
+        response = self._get_response(session, f"{base_genre_url} + {genre}")
+        if response is None:
+            return[]
+        
+        if response.status_code != 200:
+            logging.error(f"No se ha obtenido la respuesta esperada para {genre}: \n {response.status_code}")
             return []
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        books_urls = [
+            base_book_url + str(a.get("href"))
+            for a in soup.select("a.bookTitle")
+        ]
+
+        return books_urls
+
+
+    def _get_response(self, session: requests.Session, 
+                      url: str, 
+                      timeout : int = 10, 
+                      cooldown_s: int = 10) -> requests.Response | None:
+        response = None
+        for attempt in range(self.max_conn_retries + 1):
+            try:
+                response = session.get(url, timeout=timeout)
+                break
+            except requests.exceptions.Timeout:
+                if attempt < self.max_conn_retries:
+                    logging.warning(f"Timeout en {url}, reintentando en {cooldown_s}s...")
+                    time.sleep(cooldown_s)
+                else:
+                    logging.error(f"No se pudo establecer conexión con {url}")
+            except requests.exceptions.RequestException as e:
+                logging.error(f"{e}")
+                logging.error(f"No se pudo establecer conexión con {url}")
+        return response
     
-    if response.status_code != 200:
-         print(f"Error scraping genre {genre}: \n {response.status_code}")
-         return []
     
-    soup = BeautifulSoup(response.text, "html.parser")
-    books_urls = [
-        base_book_url + str(a.get("href"))
-        for a in soup.select("a.bookTitle")
-    ]
-
-    return books_urls
-
-
-def save_to_json(all_books: list, filename: str):
-    """
-    Guarda toda la lista de libros en un único archivo JSON válido
-    """
-    with open(filename + ".json", "w", encoding="utf-8") as f:
-        json.dump(all_books, f, ensure_ascii=False, indent=2)
-
-
-def main():
-    update_list_input = str(input("¿Actualizar o crear archivo de generos a scrapear? [y,N]:"))
-    if update_list_input == "y":
-        scrap_genre_names_list()
-
-
-    with open(GENRES_FILENAME, 'r') as file:
-        genres = file.readlines()
-    
-    if not genres:
-        print("No se pudo encontrar el archivo de generos")
-        return
-    
-    try:
-        os.mkdir(DATA_DIR)
-    except PermissionError:
-        print(f"Permiso denegado para crear directorio {DATA_DIR}")
-        return
-    except FileExistsError:
-        pass
-
-    for g in genres:
-        if Path(f"{DATA_DIR}{g.strip()}.json").exists():
-            print(f"{DATA_DIR}{g.strip()}.json encontrado, omitiendo")
-            continue
-        print(f"Iniciando scrapeando: {g.strip()}")
-        books_urls = get_books_urls_from_genre(g.strip())
-        books_data = []
-        i: int = 0
-        for url in books_urls:
-            time.sleep(5)
-            book_data = scrape_book(url)
-            if book_data:
-                books_data.append(book_data)
-            i += 1
-            print(f"Se han scrapeado {i}/{len(books_urls)} libros del genero {g.strip()}")
-
-        save_to_json(books_data, f"{DATA_DIR}{g.strip()}")
-        print(f"Scrapeo finalizado: {g}")
-
-
-if __name__ == "__main__":
-    main()
+    def _format_likes(self, likes: str) -> int:
+        likes = likes.strip()
+        likes = likes.replace("likes", "")
+        if ',' in likes:
+            likes = likes.replace(',','')
+        elif 'k' in likes:
+            likes = likes.replace('k','')
+            return int(float(likes) * 1000)
+        return int(likes)
