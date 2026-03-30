@@ -19,8 +19,9 @@ def lambda_handler(event, context):
         logger.error("No se pudo obtener informacion de los libros, terminando")
         return {"statusCode": 500, "body": "No se obtuvieron datos"}
 
-    local_filename = f"/tmp/{date.today()}.json"
-    remote_filename = f"1bronze/{date.today()}.json"
+    today = date.today()
+    local_filename = f"/tmp/{today}.json"
+    remote_filename = f"1bronze/year={today.year}/week={today.isocalendar().week:02d}/{today}.json"
 
     with open(local_filename, "w", encoding="utf-8") as file:
         json.dump(scraper.books_data, file, ensure_ascii=False, indent=2)
