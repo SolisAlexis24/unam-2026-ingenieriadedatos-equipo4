@@ -17,7 +17,7 @@ HEADERS = {
 }
 
 # Expresion regular para el url de un libro
-REGEX_BOOK_URL = r"https://www.goodreads.com/book/show/\d+[\w.\-]+$"
+REGEX_BOOK_URL = r"https://www.goodreads.com/book/show/(\d+)[\w.\-]+$"
 MOST_READ_BOOKS_URL = r"https://www.goodreads.com/book/most_read"
 
 
@@ -36,7 +36,7 @@ class most_read_scraper():
         if self._get_books_list() is False:
             logging.error("No se pudo obtener informacion de los libros")
             return
-        
+
         for book in tqdm(self.most_read_url_list, desc="Scrapeando libros"):
             self.books_data.append(self._scrape_book(book))
 
@@ -75,10 +75,14 @@ class most_read_scraper():
             Recolecta la informacion del libro proporcionado como parametro y sus resenas
             Devuelve un diccionario con el formato {"libro": info_libro, "reviews": info_reviews}
         """
-        if not re.match(REGEX_BOOK_URL, URL):
+        match = re.match(REGEX_BOOK_URL, URL)
+        if not match:
             logging.error(f"El url {URL} es invalido, debes proporcionar el url del libro")
             return {}
         
+        # El grupo de captura 1 es el ID del libro, (revisar REGEX_BOOK_URL)
+        book_id = int(match.group(1))
+
         session = requests.Session()
         session.headers.update(HEADERS)
 
@@ -91,7 +95,7 @@ class most_read_scraper():
             return {}
 
         soup = BeautifulSoup(response.text, "html.parser")
-        book_data = self._get_book_data(soup)
+        book_data = self._get_book_data(soup, book_id)
         reviews = self._get_reviews_data(soup)
 
         return {
@@ -100,12 +104,13 @@ class most_read_scraper():
         }
 
 
-    def _get_book_data(self, soup: BeautifulSoup) -> dict:
+    def _get_book_data(self, soup: BeautifulSoup, book_id) -> dict:
         """
             Obtiene la informacion del libro
             Devuelve los metadatos del libro en un diccionario
         """
-        book_data = {"title":"", 
+        book_data = {"id":book_id,
+                    "title":"", 
                     "author":"", 
                     "description":"" , 
                     "genres":[], 
